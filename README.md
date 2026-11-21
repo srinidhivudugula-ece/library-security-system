@@ -7,6 +7,7 @@ Visual and audio alerts are generated whenever unauthorized activities or invali
 The project also incorporates an IoT communication concept using Wi-Fi, Google Sheets and Telegram notifications for remote monitoring and transaction logging.
 
 Problem Statement
+
 Traditional departmental libraries often depend on manual supervision to maintain book security and manage student access.
 The absence of continuous monitoring creates several challenges:
 - Unauthorized removal of library books.
@@ -17,6 +18,7 @@ The absence of continuous monitoring creates several challenges:
 This project proposes a low-cost automated security solution using barcode identification and weight-based book monitoring.
 
 Project Objectives
+
 - Develop an automated library security system.
 - Authenticate students using existing college ID barcodes.
 - Identify books using ISBN barcodes.
@@ -63,7 +65,6 @@ System Block Diagram
       |            |
       v            v
  Google Sheets  Telegram
-```
 
 Software Requirements
 - Arduino IDE
