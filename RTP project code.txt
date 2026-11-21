@@ -1,0 +1,388 @@
+#include <Wire.h>
+#include <LiquidCrystal_I2C.h> 
+#include <HX711.h>
+#include <WiFi.h>
+#include <WiFiClientSecure.h> 
+#include <HTTPClient.h>
+const char* WIFI_SSID = "YOUR_WIFI_SSID";
+const char* WIFI_PASSWORD = "YOUR_WIFI_PASSWORD";
+const char* GOOGLE_SHEETS_URL = "YOUR_GOOGLE_SHEETS_WEBAPP_URL";
+const char* TELEGRAM_BOT_TOKEN =
+"YOUR_BOT_TOKEN"; const char* 
+TELEGRAM_CHAT_ID = "YOUR_CHAT_ID";
+#define RXD2 16
+#define TXD2 17
+#define HX711_DT 14
+#define HX711_SCK 13
+#define GREEN_LED 26
+#define RED_LED 27
+#define BUZZER 25
+#define IR_GATE_PIN 32 31 | P a g e
+LiquidCrystal_I2C lcd(0x27,
+16, 2); HX711 scale;
+const float BOOK_THRESHOLD = 50.0;
+const float CALIBRATION_FACTOR = 2663.6;
+const unsigned long BOOK_SCAN_TIMEOUT = 10000;
+const unsigned long SHELF_ALARM_TIMEOUT =
+30000; const unsigned long 
+GATE_OPEN_DURATION = 12000;
+const String
+STUDENTS[] = { 
+"24011P0415", 
+"24011P0427", 
+"24011D5511"
+};
+const int NUM_STUDENTS = 3;
+const String BOOKS[] = { 
+"9788129140173",
+"9780099549482",
+"8902519002228"
+};
+const int NUM_BOOKS = 3;
+const int MAX_CAPACITY = 20;
+String
+studentsInside[MAX_CAPACITY]; 
+int studentCount = 0;
+String pendingBookISBN = "";
+unsigned long bookScanTimer =
+0; String exitConfirmStudent 
+= ""; unsigned long exitTimer 
+= 0;
+bool shelfWeightDropped = 
+false; 
+unsigned long shelfDropTimer =
+0;
+String exitConfirmStudent = 32 | P a g e
+""; unsigned long exitTimer = 
+0;
+bool shelfWeightDropped = 
+false; unsigned long
+shelfDropTimer = 0;
+float baselineweight = 0.0;
+bool gateClearanceActive = 
+false; unsigned long
+gateClearanceTimer = 0; bool 
+wifiConnected = false;
+unsigned long irBreakTime = 0; 
+bool irBreakDetected =
+false;
+const unsigned long IR_DEBOUNCE = 2000; // 2 seconds
+bool isRegisteredStudent(String
+barcode); bool 
+isRegisteredBook(String barcode); 
+bool isStudentInside(String 
+barcode); void addStudent(String 
+barcode);
+void removeStudent(String
+barcode); String 
+shortenID(String id);
+void showLCD(String line1, String
+line2); void alertGreen();
+void alertRed(); 
+void
+soundBuzzer();
+void logToSheets(String event, String student, String book,
+String status); void sendTelegram(String message);
+void processScannedData(String scan);
+void setup() {
+configTime(19800, 0, "pool.ntp.org", "time.nist.gov"); // 19800 is the offset
+for Indian Standard Time (IST) time_t now = time(nullptr); int timeoutAttempts 
+= 0;
+while (now < 24 * 3600 && timeoutAttempts <
+20) { delay(500);
+now = time(nullptr); 
+timeoutAttempts++;
+}
+Serial.begin(115200); 
+delay(1000); 33 | P a g e
+Wire.begin(21, 22); 
+lcd.init(); 
+lcd.backlight();
+showLCD("Library System", "Starting...");
+pinMode(GREEN_LED, OUTPUT); 
+pinMode(RED_LED, OUTPUT); 
+pinMode(BUZZER, OUTPUT); 
+pinMode(IR_GATE_PIN, INPUT); 
+pinMode(IR_GATE_PIN,
+INPUT_PULLUP);
+Serial2.begin(9600, SERIAL_8N1, RXD2, TXD2);
+scale.begin(HX711_DT, 
+HX711_SCK); 
+scale.set_scale(CALIBRATION_F
+ACTOR); scale.tare();
+baselineweight = scale.get_units(10);
+showLCD("Connecting to", 
+"WiFi..."); const char* WIFI_SSID =
+"YOUR_WIFI_SSID";
+int attempts = 0;
+while (WiFi.status() != WL_CONNECTED && attempts <
+20) { delay(500);
+attempts++;
+}
+if (WiFi.status() == WL_CONNECTED) { 
+wifiConnected = true;
+showLCD("WiFi connected!",
+WiFi.localIP().toString()); 
+sendTelegram("Library Security System is 
+ONLINE"); delay(1500);
+} else {
+wifiConnected = false;
+showLCD("No WiFi!", "Offline mode"); 
+delay(1500);
+}
+showLCD("Ready!", "Scan ID / Book");
+}
+void loop() {
+if (pendingBookISBN != "" && (millis() - bookScanTimer >
+BOOK_SCAN_TIMEOUT)) { pendingBookISBN = "";
+showLCD("Scan timed out", "Scan ID / Book");
+} 34 | P a g e
+if (exitConfirmStudent != "" && (millis() - exitTimer > EMPTY_EXIT_TIMEOUT)) {
+exitConfirmStudent = "";
+showLCD("Exit Timed Out", "Scan ID / Book"); 
+delay(1500);
+showLCD("Ready!", "Scan ID / Book");
+}
+if (gateClearanceActive && (millis() - gateClearanceTimer > GATE_OPEN_DURATION))
+{ gateClearanceActive = false;
+}
+if (Serial2.available() > 0) {
+String scan = Serial2.readString(); 
+scan.trim();
+if (scan.length() > 0) { 
+processScannedData(scan);
+}
+}
+float currentWeight = scale.get_units(5);
+float weightDrop = baselineweight - currentWeight;
+if (weightDrop >
+BOOK_THRESHOLD) { if 
+(!shelfWeightDropped) {
+shelfWeightDropped = true;
+shelfDropTimer = millis(); // Start background clock for theft security
+}
+if (shelfWeightDropped && (millis() - shelfDropTimer > SHELF_ALARM_TIMEOUT)) { 
+sendTelegram("SECURITY ALERT Book removed from shelf for over 30 seconds
+without authorized
+scan");
+soundBuzzer();
+shelfDropTimer = millis(); // Reset timer to prevent rapid continuous
+spamming
+}
+} else {
+if (shelfWeightDropped) { 
+shelfWeightDropped = false;
+}
+}
+delay(100);
+if (digitalRead(IR_GATE_PIN) ==
+LOW) { if (!irBreakDetected) { 
+irBreakDetected = true;
+irBreakTime = millis(); 35 | P a g e
+}
+if ((millis() - irBreakTime > IR_DEBOUNCE) &&
+!gateClearanceActive && 
+studentCount > 0 && 
+shelfWeightDropped) {
+showLCD("SECURITY BREACH", "THEFT DETECTED!");
+alertRed(); 
+soundBuzzer();
+sendTelegram("SECURITY ALERT Theft detected Someone crossed exit gate
+without authorization");
+irBreakTime = millis();
+}
+}
+else {
+irBreakDetected = false;
+}
+}
+void processScannedData(String
+scan) { if 
+(isRegisteredBook(scan)) {
+exitConfirmStudent = "";
+pendingBookISBN = scan;
+bookScanTimer = millis(); // Give them 10 seconds to scan their Student ID
+card next showLCD("Book Registered", "Scan Student ID");
+return;
+}
+if
+(isRegisteredStudent(scan
+)) { if (pendingBookISBN 
+!= "") {
+if (!isStudentInside(scan)) {
+showLCD("Not Checked In!", "Scan entry
+first"); alertRed();
+return;
+}
+showLCD("Authorized Exit", "Enjoy
+Reading"); alertGreen();
+logToSheets("EXIT", scan, pendingBookISBN, "Authorized Exit");
+sendTelegram("Book checked out successfully Student ID " + scan + " Book
+ISBN " + pendingBookISBN); 36 | P a g e
+removeStudent(scan);
+pendingBookISBN = ""; // Reset book checkout state
+delay(500); 
+scale.tare(
+);
+baselineweight =
+scale.get_units(10); 
+shelfWeightDropped = false;
+delay(1500);
+showLCD("Ready!", "Scan ID /
+Book"); return;
+}
+if (isStudentInside(scan)){
+if (exitConfirmStudent == scan) { 
+showLCD("THANKYOU", "HAVE A NICE
+DAY");
+alertGreen();
+logToSheets("EXIT", scan, "NONE", "Left without Book"); 
+sendTelegram("Student left library with no books ID " +
+scan);
+removeStudent(scan);
+exitConfirmStudent = ""; // Clear double-scan tracking 
+gateClearanceActive = true;
+gateClearanceTimer = millis();
+delay(1500);
+showLCD("Ready!", "Scan ID / Book");
+}
+else {
+exitConfirmStudent = scan;
+exitTimer = millis(); // Start 10-second confirmation
+window showLCD("Exit? No book?", "Scan ID again");
+}
+return;
+}
+if (studentCount >= MAX_CAPACITY) { 
+showLCD("Library Full!", "Wait for 37 | P a g e
+exit"); alertRed();
+return;
+}
+addStudent(scan);
+showLCD("Welcome!", shortenID(scan)); 
+alertGreen();
+logToSheets("ENTRY", scan, "", "Authorized
+Entry"); sendTelegram("Student entered library ID
+" + scan);
+delay(500); 
+scale.tare();
+baselineweight = scale.get_units(10); 
+shelfWeightDropped = false;
+delay(1500);
+showLCD("Ready!", "Scan ID /
+Book"); return;
+}
+showLCD("Unknown Barcode!", "Access
+Denied"); alertRed();
+logToSheets("DENIED", scan, "", "Unknown Scanner Input"); 
+sendTelegram("ACCESS DENIED Unknown barcode input scanned " +
+scan); delay(1500);
+showLCD("Ready!", "Scan ID / Book");
+}
+bool isStudentInside(String barcode) {
+for (int i = 0; i < studentCount; i++) {
+if (studentsInside[i] == barcode) return true;
+}
+return false;
+}
+void addStudent(String barcode) {
+if (studentCount < MAX_CAPACITY) { 
+studentsInside[studentCount] =
+barcode; studentCount++;
+} 38 | P a g e
+}
+void removeStudent(String barcode) {
+for (int i = 0; i < studentCount;
+i++) { if (studentsInside[i] == 
+barcode) {
+for (int j = i; j < studentCount - 1; j++) { 
+studentsInside[j] = studentsInside[j + 1];
+}
+studentsInside[studentCount -
+1] = ""; studentCount--;
+return;
+}
+}
+}
+void logToSheets(String event, String student, String book,
+String status) { if (!wifiConnected || WiFi.status() != 
+WL_CONNECTED) return;
+HTTPClient http;
+const char* GOOGLE_SHEETS_URL = "YOUR_GOOGLE_SHEETS_WEBAPP_URL";
+http.addHeader("Content-Type",
+"application/json"); String payload = 
+"{\"event\":\"" + event + "\","
+"\"student\":\"" + student + "\","
+"\"book\":\"" + book + "\","
+"\"status\":\"" + status +
+"\"}"; int responseCode =
+http.POST(payload); http.end();
+}
+void sendTelegram(String message) {
+if (!wifiConnected || WiFi.status() != WL_CONNECTED) return;
+String encodedMessage = "";
+for (int i = 0; i <
+message.length(); i++) { char c = 
+message.charAt(i);
+if (c == ' ') encodedMessage +=
+"%20"; else if (c == ':')
+encodedMessage += "%3A"; else if (c
+== '!') encodedMessage += "%21"; 
+else if (c == '(') encodedMessage
++= "%28"; else if (c == ')')
+encodedMessage += "%29"; else if (c
+== '?') encodedMessage += "%3F"; 
+else if (c == '-') encodedMessage
++= "%2D"; else encodedMessage += c; 39 | P a g e
+}
+WiFiClientSecure client; 
+client.setInsecure();
+HTTPClient http;
+const char* TELEGRAM_BOT_TOKEN = "YOUR_BOT_TOKEN";
+http.begin(client, url);
+int responseCode =
+http.GET(); http.end();
+}
+bool isRegisteredStudent(String
+barcode) { for (int i = 0; i <
+NUM_STUDENTS; i++) {
+if (STUDENTS[i] == barcode) return true;
+}
+return false;
+}
+bool isRegisteredBook(String
+barcode) { for (int i = 0; i <
+NUM_BOOKS; i++) {
+if (BOOKS[i] == barcode) return true;
+}
+return false;
+}
+String shortenID(String id) {
+if (id.length() > 16) return
+id.substring(0, 16); return id;
+}
+void showLCD(String line1, String line2)
+{ lcd.clear();
+lcd.setCursor(0, 0);
+lcd.print(line1.substring(0, 16));
+lcd.setCursor(0, 1);
+lcd.print(line2.substring(0, 16));
+}
+void alertGreen() { 
+digitalWrite(GREEN_LED,
+HIGH); delay(3000); 
+digitalWrite(GREEN_LED, 
+LOW); 40 | P a g e
+}
+void alertRed() { 
+digitalWrite(RED_LED,
+HIGH); delay(3000); 
+digitalWrite(RED_LED, 
+LOW);
+}
+void soundBuzzer() {
+for (int i = 0; i < 5; i++)
+{ tone(BUZZER, 1000, 200);
+delay(3000);
+}
+}
