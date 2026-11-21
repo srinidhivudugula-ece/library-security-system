@@ -1,4 +1,5 @@
 Overview
+
 The **Library Security System** is an automated embedded system designed to improve library security, monitor book movements, and authenticate students without requiring continuous manual supervision.
 The system uses an ESP32 microcontroller, GM65 barcode scanner, load cell, and HX711 amplifier to identify students, detect book removals, and validate book transactions.
 Students can use their existing college ID card barcodes for identification, while books are identified using their ISBN barcodes.
@@ -54,19 +55,19 @@ System Block Diagram
      +----+------+
      |           |
      v           v
-  GREEN LED   RED LED
-                 |
-                 v
-               BUZZER
-
+     green led   red led
+                   | 
+                   v
+                   buzzer 
        ESP32 Wi-Fi
             |
       +-----+------+
       |            |
       v            v
- Google Sheets  Telegram
+      Google Sheets  Telegram
 
 Software Requirements
+
 - Arduino IDE
 - ESP32 Board Package
 - Embedded C/C++
@@ -77,7 +78,8 @@ Software Requirements
 - HTTPClient Library
 - WiFiClientSecure Library
 
-Project Advantages
+Advantages
+
 - Reduces dependence on manual supervision.
 - Uses existing student ID and book barcodes.
 - Provides automated book removal detection.
@@ -87,6 +89,7 @@ Project Advantages
 - Supports expansion towards IoT-based monitoring.
 
  Current Limitations
+ 
 - A single load-cell channel cannot independently identify multiple books removed simultaneously.
 - Weight drift and mechanical vibrations can affect detection accuracy.
 - The prototype requires appropriate calibration.
@@ -95,6 +98,7 @@ Project Advantages
 - Reliable deployment requires further validation of the checkout and exit synchronization logic.
 
 Future Scope
+
 - Integration with Firebase or an SQL database.
 - Real-time administrator dashboards.
 - Improved cloud-based student authentication.
